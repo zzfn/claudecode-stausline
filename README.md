@@ -10,10 +10,27 @@
 
 ## 安装
 
-### 方式一：一键安装（推荐，仅限 Linux/macOS）
+### 方式一：一键安装（推荐）
+
+#### Linux/macOS
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/zzfn/cc-statusline/main/setup.sh | bash
+```
+
+#### Windows
+
+在 PowerShell 中运行（以管理员身份）：
+
+```powershell
+irm https://raw.githubusercontent.com/zzfn/cc-statusline/main/setup.ps1 | iex
+```
+
+或下载后运行：
+
+```powershell
+Invoke-WebRequest -Uri https://raw.githubusercontent.com/zzfn/cc-statusline/main/setup.ps1 -OutFile setup.ps1
+.\setup.ps1
 ```
 
 ### 方式二：从源码构建
