@@ -23,6 +23,8 @@ jobs:
             target: x86_64-apple-darwin
           - os: macos-latest
             target: aarch64-apple-darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
 
     steps:
       - uses: actions/checkout@v4
@@ -52,16 +54,24 @@ jobs:
           cargo build --release --target ${{ matrix.target }}
 
       - name: Package
+        shell: bash
         run: |
           cd target/${{ matrix.target }}/release
-          tar czf cc-statusline-${{ matrix.target }}.tar.gz cc-statusline
-          mv cc-statusline-${{ matrix.target }}.tar.gz ../../../
+          if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
+            7z a cc-statusline-${{ matrix.target }}.zip cc-statusline.exe
+            mv cc-statusline-${{ matrix.target }}.zip ../../../
+          else
+            tar czf cc-statusline-${{ matrix.target }}.tar.gz cc-statusline
+            mv cc-statusline-${{ matrix.target }}.tar.gz ../../../
+          fi
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: cc-statusline-${{ matrix.target }}
-          path: cc-statusline-${{ matrix.target }}.tar.gz
+          path: |
+            cc-statusline-${{ matrix.target }}.tar.gz
+            cc-statusline-${{ matrix.target }}.zip
 
   release:
     name: Create Release
@@ -78,7 +88,9 @@ jobs:
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
-          files: artifacts/**/*.tar.gz
+          files: |
+            artifacts/**/*.tar.gz
+            artifacts/**/*.zip
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

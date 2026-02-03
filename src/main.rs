@@ -115,7 +115,10 @@ fn format_cost(cost: f64) -> String {
 
 /// 从路径中提取目录名
 fn get_dir_name(path: &str) -> &str {
-    path.rsplit('/').next().unwrap_or(path)
+    std::path::Path::new(path)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or(path)
 }
 
 /// 获取当前 git 分支名
@@ -207,7 +210,9 @@ pub struct ZhipuUsageCache {
 
 /// 获取缓存文件路径
 fn get_cache_path() -> PathBuf {
-    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .unwrap_or_else(|_| ".".to_string());
     PathBuf::from(home).join(".claude").join(".zhipu_cache.json")
 }
 
@@ -302,7 +307,9 @@ struct ClaudeConfig {
 
 /// 从 Claude Code 配置文件读取配置
 fn read_claude_config() -> Option<(String, String)> {
-    let home = std::env::var("HOME").ok()?;
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .ok()?;
     let config_path = PathBuf::from(home).join(".claude").join("settings.json");
 
     let content = fs::read_to_string(config_path).ok()?;
@@ -374,7 +381,19 @@ fn build_statusline(input: &StatusInput) -> String {
     }
 
     // 上下文使用率
-    if let Some(percentage) = input.context_window.used_percentage {
+    let percentage = input.context_window.used_percentage.or_else(|| {
+        // 如果没有 used_percentage，尝试从其他字段计算
+        let total_in = input.context_window.total_input_tokens?;
+        let total_out = input.context_window.total_output_tokens?;
+        let window_size = input.context_window.context_window_size?;
+        if window_size > 0 {
+            Some(((total_in + total_out) as f64 / window_size as f64) * 100.0)
+        } else {
+            None
+        }
+    });
+
+    if let Some(percentage) = percentage {
         let color = get_context_color(percentage);
         parts.push(format!(
             "{}ctx:{:.0}%{}",

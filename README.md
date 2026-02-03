@@ -10,7 +10,7 @@
 
 ## 安装
 
-### 方式一：一键安装（推荐）
+### 方式一：一键安装（推荐，仅限 Linux/macOS）
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/zzfn/cc-statusline/main/setup.sh | bash
@@ -21,10 +21,13 @@ curl -fsSL https://raw.githubusercontent.com/zzfn/cc-statusline/main/setup.sh | 
 ```bash
 git clone https://github.com/zzfn/cc-statusline.git
 cd cc-statusline
-./install.sh
+./install.sh  # Linux/macOS
+# 或在 Windows 上使用: cargo build --release
 ```
 
 ### 方式三：手动安装
+
+#### Linux/macOS
 
 1. 从 [Releases](https://github.com/zzfn/cc-statusline/releases) 下载对应平台的二进制文件
 2. 解压并复制到 `~/.claude/`
@@ -35,6 +38,22 @@ cd cc-statusline
   "statusLine": {
     "type": "command",
     "command": "~/.claude/cc-statusline",
+    "padding": 0
+  }
+}
+```
+
+#### Windows
+
+1. 从 [Releases](https://github.com/zzfn/cc-statusline/releases) 下载 `cc-statusline-x86_64-pc-windows-msvc.zip`
+2. 解压到 `%USERPROFILE%\.claude\` 目录
+3. 在 `%USERPROFILE%\.claude\settings.json` 中添加：
+
+```json
+{
+  "statusLine": {
+    "type": "command",
+    "command": "%USERPROFILE%\\.claude\\cc-statusline.exe",
     "padding": 0
   }
 }
