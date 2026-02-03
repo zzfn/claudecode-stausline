@@ -1,5 +1,6 @@
 use serde::Deserialize;
 use std::io::{self, Read};
+use std::process::Command;
 
 /// 模型信息
 #[derive(Debug, Deserialize, Default)]
@@ -112,6 +113,24 @@ fn get_dir_name(path: &str) -> &str {
     path.rsplit('/').next().unwrap_or(path)
 }
 
+/// 获取当前 git 分支名
+fn get_git_branch(cwd: Option<&str>) -> Option<String> {
+    let output = Command::new("git")
+        .args(&["branch", "--show-current"])
+        .current_dir(cwd.unwrap_or("."))
+        .output()
+        .ok()?;
+
+    if output.status.success() {
+        let branch = String::from_utf8(output.stdout).ok()?;
+        let branch = branch.trim();
+        if !branch.is_empty() {
+            return Some(branch.to_string());
+        }
+    }
+    None
+}
+
 /// 构建 statusline 输出
 fn build_statusline(input: &StatusInput) -> String {
     let mut parts = Vec::new();
@@ -134,6 +153,16 @@ fn build_statusline(input: &StatusInput) -> String {
             "{}{}{}",
             colors::CYAN,
             dir_name,
+            colors::RESET
+        ));
+    }
+
+    // Git 分支
+    if let Some(branch) = get_git_branch(input.workspace.current_dir.as_deref()) {
+        parts.push(format!(
+            "{}{}{}",
+            colors::BLUE,
+            branch,
             colors::RESET
         ));
     }
