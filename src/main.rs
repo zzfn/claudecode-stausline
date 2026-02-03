@@ -115,9 +115,11 @@ fn get_dir_name(path: &str) -> &str {
 
 /// 获取当前 git 分支名
 fn get_git_branch(cwd: Option<&str>) -> Option<String> {
+    let cwd = cwd?; // 如果没有工作目录,直接返回 None
+
     let output = Command::new("git")
         .args(&["branch", "--show-current"])
-        .current_dir(cwd.unwrap_or("."))
+        .current_dir(cwd)
         .output()
         .ok()?;
 
