@@ -41,6 +41,10 @@ pub struct YunyiUsageCache {
     pub expires_at: Option<String>,
     pub request_count: Option<u64>,
     pub daily_request_count: Option<u64>,
+    // 额度包字段
+    pub quota_pack: Option<u64>,
+    pub quota_pack_remaining: Option<u64>,
+    pub quota_pack_expires_at: Option<String>,
     pub timestamp: DateTime<Utc>,
 }
 
@@ -212,7 +216,7 @@ impl YunyiProvider {
 
         let now = Utc::now();
         let age = now.signed_duration_since(cache.timestamp);
-        if age.num_minutes() < 3 {
+        if age.num_minutes() < 1 {
             Some(cache)
         } else {
             None
@@ -257,6 +261,10 @@ impl YunyiProvider {
             daily_spent: Option<u64>,
             daily_used: Option<u64>,
             daily_total_spent: Option<u64>,
+            // 额度包字段
+            quota_pack: Option<u64>,
+            quota_pack_remaining: Option<u64>,
+            quota_pack_expires_at: Option<String>,
         }
 
         #[derive(Deserialize)]
@@ -288,6 +296,9 @@ impl YunyiProvider {
             expires_at: api_response.timestamps.expires_at,
             request_count: api_response.usage.request_count,
             daily_request_count: api_response.usage.daily_request_count,
+            quota_pack: api_response.quota.quota_pack,
+            quota_pack_remaining: api_response.quota.quota_pack_remaining,
+            quota_pack_expires_at: api_response.quota.quota_pack_expires_at,
             timestamp: Utc::now(),
         };
 
@@ -323,10 +334,16 @@ impl Provider for YunyiProvider {
             return parts;
         };
 
+        // 计算总剩余额度 = 每日剩余 + 额度包剩余
         if let (Some(quota), Some(total_spent)) = (usage.daily_quota, usage.daily_total_spent) {
-            let remaining = quota.saturating_sub(total_spent);
-            let remaining_pct = if quota > 0 {
-                (remaining as f64 / quota as f64) * 100.0
+            let daily_remaining = quota.saturating_sub(total_spent);
+            let pack_remaining = usage.quota_pack_remaining.unwrap_or(0);
+            let total_remaining = daily_remaining + pack_remaining;
+
+            // 计算总额度用于百分比
+            let total_quota = quota + usage.quota_pack.unwrap_or(0);
+            let remaining_pct = if total_quota > 0 {
+                (total_remaining as f64 / total_quota as f64) * 100.0
             } else {
                 0.0
             };
@@ -337,17 +354,27 @@ impl Provider for YunyiProvider {
             } else {
                 colors::GREEN
             };
-            let remaining_usd = remaining as f64 / 100.0;
+            let remaining_usd = total_remaining as f64 / 100.0;
+            let daily_remaining_usd = daily_remaining as f64 / 100.0;
+            let quota_detail = if pack_remaining > 0 {
+                let pack_remaining_usd = pack_remaining as f64 / 100.0;
+                format!("(日${:.2}+包${:.2})", daily_remaining_usd, pack_remaining_usd)
+            } else {
+                String::new()
+            };
             parts.push(format!(
-                "{}[YUNYI] Rem:${:.2}{}",
+                "{}[YUNYI] 剩余{:.0}% ${:.2}{}{}",
                 color,
+                remaining_pct,
                 remaining_usd,
+                quota_detail,
                 colors::RESET
             ));
         }
 
-        if let Some(ref expires_at) = usage.expires_at {
-            let formatted = chrono::DateTime::parse_from_rfc3339(expires_at)
+        // 过期时间合并显示
+        let format_time = |s: &str| -> String {
+            chrono::DateTime::parse_from_rfc3339(s)
                 .map(|dt| {
                     if let Some(offset) = chrono::FixedOffset::east_opt(8 * 3600) {
                         dt.with_timezone(&offset)
@@ -356,13 +383,39 @@ impl Provider for YunyiProvider {
                     }
                 })
                 .map(|dt| dt.format("%m-%d %H:%M").to_string())
-                .unwrap_or_else(|_| expires_at.clone());
-            parts.push(format!(
-                "{}[YUNYI] Exp:{}{}",
-                colors::DIM,
-                formatted,
-                colors::RESET
-            ));
+                .unwrap_or_else(|_| s.to_string())
+        };
+
+        let exp_str = usage.expires_at.as_ref().map(|s| format_time(s));
+        let pack_exp_str = usage.quota_pack_expires_at.as_ref().map(|s| format_time(s));
+
+        match (exp_str, pack_exp_str) {
+            (Some(exp), Some(pack_exp)) => {
+                parts.push(format!(
+                    "{}[YUNYI] Exp:{} 包:{}{}",
+                    colors::DIM,
+                    exp,
+                    pack_exp,
+                    colors::RESET
+                ));
+            }
+            (Some(exp), None) => {
+                parts.push(format!(
+                    "{}[YUNYI] Exp:{}{}",
+                    colors::DIM,
+                    exp,
+                    colors::RESET
+                ));
+            }
+            (None, Some(pack_exp)) => {
+                parts.push(format!(
+                    "{}[YUNYI] 包Exp:{}{}",
+                    colors::DIM,
+                    pack_exp,
+                    colors::RESET
+                ));
+            }
+            (None, None) => {}
         }
 
         parts
