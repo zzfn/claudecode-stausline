@@ -1,6 +1,11 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::io::{self, Read};
 use std::process::Command;
+use std::fs;
+use std::path::PathBuf;
+use chrono::{DateTime, Utc};
+use reqwest::blocking::Client;
+use std::time::Duration;
 
 /// 模型信息
 #[derive(Debug, Deserialize, Default)]
@@ -181,6 +186,157 @@ fn calculate_cache_hit_rate(usage: &CurrentUsage) -> Option<f64> {
     Some(hit_rate)
 }
 
+/// 质普配额限制信息
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct QuotaLimit {
+    #[serde(rename = "type")]
+    pub limit_type: String,
+    pub percentage: f64,
+    #[serde(rename = "currentValue")]
+    pub current_value: Option<u64>,
+    pub usage: Option<u64>,
+}
+
+/// 质普使用情况缓存
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct ZhipuUsageCache {
+    pub token_limit: Option<QuotaLimit>,
+    pub mcp_limit: Option<QuotaLimit>,
+    pub timestamp: DateTime<Utc>,
+}
+
+/// 获取缓存文件路径
+fn get_cache_path() -> PathBuf {
+    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+    PathBuf::from(home).join(".claude").join(".zhipu_cache.json")
+}
+
+/// 读取缓存
+fn read_cache() -> Option<ZhipuUsageCache> {
+    let cache_path = get_cache_path();
+    let content = fs::read_to_string(cache_path).ok()?;
+    let cache: ZhipuUsageCache = serde_json::from_str(&content).ok()?;
+
+    // 检查缓存是否过期（5分钟）
+    let now = Utc::now();
+    let age = now.signed_duration_since(cache.timestamp);
+    if age.num_minutes() < 5 {
+        Some(cache)
+    } else {
+        None
+    }
+}
+
+/// 写入缓存
+fn write_cache(cache: &ZhipuUsageCache) {
+    let cache_path = get_cache_path();
+    if let Ok(json) = serde_json::to_string(cache) {
+        let _ = fs::write(cache_path, json);
+    }
+}
+
+/// 从质普 API 获取使用情况
+fn fetch_zhipu_usage(base_url: &str, auth_token: &str) -> Option<ZhipuUsageCache> {
+    let parsed_url = base_url.parse::<reqwest::Url>().ok()?;
+    let base_domain = format!("{}://{}", parsed_url.scheme(), parsed_url.host_str()?);
+    let quota_url = format!("{}/api/monitor/usage/quota/limit", base_domain);
+
+    let client = Client::builder()
+        .timeout(Duration::from_secs(3))
+        .build()
+        .ok()?;
+
+    let response = client
+        .get(&quota_url)
+        .header("Authorization", auth_token)
+        .header("Accept-Language", "en-US,en")
+        .header("Content-Type", "application/json")
+        .send()
+        .ok()?;
+
+    if !response.status().is_success() {
+        return None;
+    }
+
+    #[derive(Deserialize)]
+    struct ApiResponse {
+        data: ApiData,
+    }
+
+    #[derive(Deserialize)]
+    struct ApiData {
+        limits: Vec<QuotaLimit>,
+    }
+
+    let api_response: ApiResponse = response.json().ok()?;
+
+    let mut token_limit = None;
+    let mut mcp_limit = None;
+
+    for limit in api_response.data.limits {
+        match limit.limit_type.as_str() {
+            "TOKENS_LIMIT" => token_limit = Some(limit),
+            "TIME_LIMIT" => mcp_limit = Some(limit),
+            _ => {}
+        }
+    }
+
+    let cache = ZhipuUsageCache {
+        token_limit,
+        mcp_limit,
+        timestamp: Utc::now(),
+    };
+
+    write_cache(&cache);
+    Some(cache)
+}
+
+/// Claude Code 配置文件结构
+#[derive(Debug, Deserialize)]
+struct ClaudeConfig {
+    #[serde(rename = "baseURL")]
+    base_url: Option<String>,
+    #[serde(rename = "authToken")]
+    auth_token: Option<String>,
+}
+
+/// 从 Claude Code 配置文件读取配置
+fn read_claude_config() -> Option<(String, String)> {
+    let home = std::env::var("HOME").ok()?;
+    let config_path = PathBuf::from(home).join(".claude").join("settings.json");
+
+    let content = fs::read_to_string(config_path).ok()?;
+    let config: ClaudeConfig = serde_json::from_str(&content).ok()?;
+
+    let base_url = config.base_url?;
+    let auth_token = config.auth_token?;
+
+    Some((base_url, auth_token))
+}
+
+/// 获取质普使用情况（带缓存）
+fn get_zhipu_usage() -> Option<ZhipuUsageCache> {
+    // 先尝试读取缓存
+    if let Some(cache) = read_cache() {
+        return Some(cache);
+    }
+
+    // 缓存不存在或过期，从配置文件或环境变量获取
+    let (base_url, auth_token) = read_claude_config()
+        .or_else(|| {
+            let base_url = std::env::var("ANTHROPIC_BASE_URL").ok()?;
+            let auth_token = std::env::var("ANTHROPIC_AUTH_TOKEN").ok()?;
+            Some((base_url, auth_token))
+        })?;
+
+    // 检查是否是质普域名
+    if !base_url.contains("bigmodel.cn") && !base_url.contains("api.z.ai") {
+        return None;
+    }
+
+    fetch_zhipu_usage(&base_url, &auth_token)
+}
+
 /// 构建 statusline 输出
 fn build_statusline(input: &StatusInput) -> String {
     let mut parts = Vec::new();
@@ -213,16 +369,6 @@ fn build_statusline(input: &StatusInput) -> String {
             "{}{}{}",
             colors::BLUE,
             branch,
-            colors::RESET
-        ));
-    }
-
-    // 未提交文件数
-    if let Some(count) = get_uncommitted_files(input.workspace.current_dir.as_deref()) {
-        parts.push(format!(
-            "{}📝{}{}",
-            colors::YELLOW,
-            count,
             colors::RESET
         ));
     }
@@ -274,42 +420,41 @@ fn build_statusline(input: &StatusInput) -> String {
         }
     }
 
-    // 成本
-    if let Some(cost) = input.cost.total_cost_usd {
-        if cost > 0.0 {
+    // 质普使用情况（放在最后）
+    if let Some(zhipu_usage) = get_zhipu_usage() {
+        // Token 使用量（5小时）
+        if let Some(ref token_limit) = zhipu_usage.token_limit {
+            let color = if token_limit.percentage >= 80.0 {
+                colors::RED
+            } else if token_limit.percentage >= 60.0 {
+                colors::YELLOW
+            } else {
+                colors::GREEN
+            };
             parts.push(format!(
-                "{}${}{}",
-                colors::YELLOW,
-                format_cost(cost),
+                "{}[ZAI] Token(5h):{:.0}%{}",
+                color,
+                token_limit.percentage,
                 colors::RESET
             ));
         }
-    }
 
-    // 会话时长
-    if let Some(duration_ms) = input.cost.total_duration_ms {
-        if duration_ms > 0 {
+        // MCP 使用量（1个月）
+        if let Some(ref mcp_limit) = zhipu_usage.mcp_limit {
+            let color = if mcp_limit.percentage >= 80.0 {
+                colors::RED
+            } else if mcp_limit.percentage >= 60.0 {
+                colors::YELLOW
+            } else {
+                colors::GREEN
+            };
             parts.push(format!(
-                "{}⏱{}{}",
-                colors::CYAN,
-                format_duration(duration_ms),
+                "{}[ZAI] MCP(1月):{:.0}%{}",
+                color,
+                mcp_limit.percentage,
                 colors::RESET
             ));
         }
-    }
-
-    // 代码变更统计
-    let lines_added = input.cost.total_lines_added.unwrap_or(0);
-    let lines_removed = input.cost.total_lines_removed.unwrap_or(0);
-    if lines_added > 0 || lines_removed > 0 {
-        parts.push(format!(
-            "{}+{}{}/-{}{}",
-            colors::GREEN,
-            lines_added,
-            colors::RED,
-            lines_removed,
-            colors::RESET
-        ));
     }
 
     parts.join(" │ ")
