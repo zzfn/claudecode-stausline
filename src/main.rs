@@ -381,8 +381,16 @@ fn build_statusline(input: &StatusInput) -> String {
     }
 
     // 上下文使用率
-    let percentage = input.context_window.used_percentage.or_else(|| {
-        // 如果没有 used_percentage，尝试从其他字段计算
+    let percentage = if let Some(used_pct) = input.context_window.used_percentage {
+        if used_pct > 0.0 {
+            Some(used_pct)
+        } else {
+            None
+        }
+    } else {
+        None
+    }.or_else(|| {
+        // 如果 used_percentage 不存在或为 0，则从 token 数计算
         let total_in = input.context_window.total_input_tokens?;
         let total_out = input.context_window.total_output_tokens?;
         let window_size = input.context_window.context_window_size?;
