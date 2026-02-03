@@ -5,7 +5,7 @@
 ## 效果预览
 
 ```
-[Opus] │ my-project │ main │ 📝3 │ ctx:42% │ in:15.2k │ cache:85% │ [ZAI] Token(5h):1% │ [ZAI] MCP(1月):0%
+[Opus] │ my-project │ main │ ctx:42% │ in:15.2k │ cache:85% │ [ZAI] Token(5h):1% │ [ZAI] MCP(1月):0%
 ```
 
 ## 安装
@@ -61,7 +61,6 @@ export ANTHROPIC_AUTH_TOKEN="your-token-here"
 | `[Model]` | 当前模型名称 | 紫色 |
 | 目录名 | 当前工作目录 | 青色 |
 | Git 分支 | 当前 git 分支 | 蓝色 |
-| `📝N` | 未提交的文件数 | 黄色 |
 | `ctx:N%` | 上下文窗口使用率 | 绿/黄/红 |
 | `in:Nk` | 输入 token 数 | 灰色 |
 | `cache:N%` | 缓存命中率 | 绿/黄/红 |
